@@ -435,12 +435,14 @@ def resolve_site_from_ai_response(response_payload):
 
 def resolve_site_with_ai(user_query):
     api_key = os.environ.get(OPENAI_API_KEY_ENV, "").strip()
-    if api_key:
-        try:
-            response_payload = query_openai_for_site(user_query, api_key)
-            return resolve_site_from_ai_response(response_payload)
-        except Exception:
-            pass  # Fall back to fuzzy search
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY is not set.")
+
+    try:
+        response_payload = query_openai_for_site(user_query, api_key)
+        return resolve_site_from_ai_response(response_payload)
+    except Exception:
+        pass  # Fall back to fuzzy search
     # Fallback to fuzzy search
     candidates = get_site_candidates(user_query, limit=1)
     if candidates:
