@@ -5,6 +5,8 @@ from urllib.request import urlopen
 
 import pandas as pd
 
+from snotel_sites import SITE_ID_TO_INFO
+
 
 DISPLAY_COLUMNS = {
     "Date": "date",
@@ -60,6 +62,21 @@ def get_snotel_data(site_id, state):
     csv_text = _extract_csv_text(report_text)
     df = pd.read_csv(StringIO(csv_text), parse_dates=["Date"])
     return df
+
+
+def get_site_info(site_id):
+    site_key = str(site_id)
+    if site_key not in SITE_ID_TO_INFO:
+        raise KeyError(f"No site info mapping found for site id {site_key}.")
+    return SITE_ID_TO_INFO[site_key]
+
+
+def get_site_name(site_id):
+    return get_site_info(site_id)["name"]
+
+
+def get_site_state(site_id):
+    return get_site_info(site_id)["state"]
 
 
 def format_snotel_for_display(df, rows=10):
@@ -132,7 +149,12 @@ def write_html_table(df, output_path="snotel_table.html"):
 
 
 if __name__ == "__main__":
-    df_snow = get_snotel_data("395", "OR")
+    site_id = "395"
+    site_info = get_site_info(site_id)
+    df_snow = get_snotel_data(site_id, site_info["state"])
     display_df = format_snotel_for_display(df_snow)
     output_file = write_html_table(display_df)
-    print(f"Black-bordered table written to: {output_file}")
+    print(
+        "Black-bordered table written to: "
+        f"{output_file} for site {site_id} ({site_info['name']}, {site_info['state']})"
+    )
