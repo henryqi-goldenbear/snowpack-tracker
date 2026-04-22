@@ -32,13 +32,13 @@ DISPLAY_COLUMNS = {
 }
 USAGE = (
     "Usage: python snotel.py [site_id_or_exact_name] <start_date> <end_date>\n"
-    "If site is omitted, a popup uses Perplexity Sonar to resolve a site from "
+    "If site is omitted, a popup uses OpenAI GPT to resolve a site from "
     "your natural-language search.\n"
     "Dates must use YYYY-MM-DD."
 )
-PERPLEXITY_API_URL = "https://api.perplexity.ai/v1/sonar"
-PERPLEXITY_MODEL = "sonar"
-PERPLEXITY_API_KEY_ENV = "PERPLEXITY_API_KEY"
+OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
 PROMPT_TIMEOUT_SECONDS = 300
 
 
@@ -252,7 +252,7 @@ def _build_prompt_page():
     <p>Describe the station you want, like "Palisades Tahoe", "Mt Hood snow site", or "best Tahoe SNOTEL".</p>
     <form method="post" action="/submit">
       <input autofocus name="query" placeholder="Search for a snow site" />
-      <button type="submit">Search with Sonar</button>
+      <button type="submit">Search with GPT</button>
     </form>
     <p class="hint">This page stays local on your machine and only sends your typed query to the Python process running `snotel.py`.</p>
   </main>
@@ -358,7 +358,7 @@ def prompt_for_site_query():
     return query or None
 
 
-def build_perplexity_messages(user_query):
+def build_openai_messages(user_query):
     return [
         {
             "role": "system",
@@ -382,20 +382,20 @@ def build_perplexity_messages(user_query):
 def _extract_json_object(text):
     match = re.search(r"\{.*\}", text, flags=re.DOTALL)
     if not match:
-        raise ValueError("Perplexity did not return a JSON object.")
+        raise ValueError("OpenAI did not return a JSON object.")
     return json.loads(match.group(0))
 
 
-def query_perplexity_for_site(user_query, api_key):
+def query_openai_for_site(user_query, api_key):
     payload = json.dumps(
         {
-            "model": PERPLEXITY_MODEL,
-            "messages": build_perplexity_messages(user_query),
+            "model": OPENAI_MODEL,
+            "messages": build_openai_messages(user_query),
             "temperature": 0,
         }
     ).encode("utf-8")
     request = Request(
-        PERPLEXITY_API_URL,
+        OPENAI_API_URL,
         data=payload,
         headers={
             "Authorization": f"Bearer {api_key}",
@@ -409,17 +409,17 @@ def query_perplexity_for_site(user_query, api_key):
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(
-            f"Perplexity request failed with HTTP {exc.code}: {detail}"
+            f"OpenAI request failed with HTTP {exc.code}: {detail}"
         ) from exc
     except URLError as exc:
-        raise RuntimeError(f"Could not reach the Perplexity service: {exc.reason}") from exc
+        raise RuntimeError(f"Could not reach the OpenAI service: {exc.reason}") from exc
 
 
 def resolve_site_from_ai_response(response_payload):
     try:
         content = response_payload["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
-        raise ValueError("Perplexity response did not include a chat message.") from exc
+        raise ValueError("OpenAI response did not include a chat message.") from exc
 
     parsed = _extract_json_object(content)
     site_id = str(parsed.get("site_id", "")).strip()
@@ -430,17 +430,23 @@ def resolve_site_from_ai_response(response_payload):
     if site_name:
         return get_site_id(site_name), get_site_info(site_name)
 
-    raise ValueError("Perplexity response did not include a usable site_id or site_name.")
+    raise ValueError("OpenAI response did not include a usable site_id or site_name.")
 
 
 def resolve_site_with_ai(user_query):
-    api_key = os.environ.get(PERPLEXITY_API_KEY_ENV, "").strip()
-    if not api_key:
-        raise ValueError(
-            f"Set {PERPLEXITY_API_KEY_ENV} before using popup search without a site argument."
-        )
-    response_payload = query_perplexity_for_site(user_query, api_key)
-    return resolve_site_from_ai_response(response_payload)
+    api_key = os.environ.get(OPENAI_API_KEY_ENV, "").strip()
+    if api_key:
+        try:
+            response_payload = query_openai_for_site(user_query, api_key)
+            return resolve_site_from_ai_response(response_payload)
+        except Exception:
+            pass  # Fall back to fuzzy search
+    # Fallback to fuzzy search
+    candidates = get_site_candidates(user_query, limit=1)
+    if candidates:
+        site_id, info = candidates[0]
+        return site_id, info
+    raise ValueError(f"No site found for query '{user_query}'.")
 
 
 def resolve_site_from_popup_search():
