@@ -1,37 +1,35 @@
 # Snowpack Tracker
 
-`snowpack-tracker` is a small Python CLI for pulling daily SNOTEL data from the USDA NRCS report generator and rendering it as a simple black-bordered HTML table you can open in a browser.
+`snowpack-tracker` is a small Python toolkit for pulling daily SNOTEL data from the USDA NRCS report generator, rendering quick HTML reports, and loading historical snow-season observations into partitioned PostgreSQL tables.
 
-It is geared toward quick station lookups and lightweight local reporting rather than a full web app.
+It is still a lightweight local project rather than a full production app, but the core integration paths are now working end to end.
 
-## What It Does
+## What Works Now
 
-- Fetches daily SNOTEL observations for a station and date range
-- Includes snow water equivalent, snow depth, precipitation, and temperature columns
-- Writes a deterministic HTML report like `snotel_784_2026-04-01_2026-04-21.html`
-- Opens the generated report in your default browser
-- Supports direct station lookup by site ID or exact site name
-- Supports popup-based natural-language station search (requires `OPENAI_API_KEY`; falls back to fuzzy if the API call fails)
-- Includes a state-level Streamlit dashboard for percentiles + narrative summaries
+- Single-station CLI fetches daily SNOTEL observations and writes deterministic HTML output
+- Station lookup works by site ID, exact name, and popup-based natural-language search
+- State-level dashboard code computes percentiles and optional narratives
+- Bulk ingest can fetch real NRCS data, partition it by `site_id` and season bucket, and load it into PostgreSQL
+- Real Postgres schema creation and real one-site ingest smoke tests have both been verified
 
 ## Project Layout
 
 - [`snotel.py`](/C:/Users/zhiha/snowpack-tracker/snotel.py) - main CLI, HTML rendering, popup search flow
-- [`snotel_sites.py`](/C:/Users/zhiha/snowpack-tracker/snotel_sites.py) - SNOTEL site metadata used for station lookup
-- [`climate_report.py`](/C:/Users/zhiha/snowpack-tracker/climate_report.py) - baseline percentile computations + caching
-- [`narrative.py`](/C:/Users/zhiha/snowpack-tracker/narrative.py) - grounded AI narrative (JSON) + validation + fallback template
+- [`snotel_sites.py`](/C:/Users/zhiha/snowpack-tracker/snotel_sites.py) - SNOTEL site metadata
+- [`snotel_bulk_ingest.py`](/C:/Users/zhiha/snowpack-tracker/snotel_bulk_ingest.py) - historical SNOTEL to Postgres loader
+- [`snotel_postgres.py`](/C:/Users/zhiha/snowpack-tracker/snotel_postgres.py) - Postgres connection and partitioned schema creation
 - [`app.py`](/C:/Users/zhiha/snowpack-tracker/app.py) - Streamlit dashboard UI
-- [`test_snotel.py`](/C:/Users/zhiha/snowpack-tracker/test_snotel.py) - unit tests for the CLI and helpers
-- [`test_climate_report.py`](/C:/Users/zhiha/snowpack-tracker/test_climate_report.py) - unit tests for percentiles + narrative validation
-- [`climata/`](/C:/Users/zhiha/snowpack-tracker/climata) - vendored upstream library code referenced during development
-- [`waterdata.py`](/C:/Users/zhiha/snowpack-tracker/waterdata.py) - separate USGS water data experiment
+- [`test_snotel.py`](/C:/Users/zhiha/snowpack-tracker/test_snotel.py), [`test_climate_report.py`](/C:/Users/zhiha/snowpack-tracker/test_climate_report.py), [`test_snotel_postgres.py`](/C:/Users/zhiha/snowpack-tracker/test_snotel_postgres.py), [`test_snotel_bulk_ingest.py`](/C:/Users/zhiha/snowpack-tracker/test_snotel_bulk_ingest.py) - test coverage
 
 ## Requirements
 
 - Python 3
 - `pandas`
 - Internet access to reach the USDA SNOTEL endpoint
-- For the dashboard: `streamlit` (and optionally `pyarrow` for Parquet caching)
+- For dashboard work: `streamlit` and optionally `pyarrow`
+- For Postgres ingest: a reachable PostgreSQL server and either:
+  - a working Python Postgres driver (`psycopg` or `psycopg2`), or
+  - `psql` available locally as a fallback client
 
 ## Setup
 
@@ -43,38 +41,15 @@ python -m venv .venv
 pip install pandas
 ```
 
-Optionally, set your OpenAI API key for enhanced natural-language site search:
+Optionally set your OpenAI API key for the natural-language site search flow:
 
 ```powershell
 $env:OPENAI_API_KEY="your_api_key_here"
 ```
 
-If the API key is not set, the popup-based flow will not run. If the API call fails (network/key/model issues), it will fall back to fuzzy search using the local site catalog.
+If the API key is not set, the popup-based flow will not run. If the API call fails, the search falls back to the local site catalog.
 
-## State Dashboard (Streamlit)
-
-Install dependencies:
-
-```powershell
-pip install streamlit pyarrow
-```
-
-Run the dashboard:
-
-```powershell
-streamlit run app.py
-```
-
-The dashboard:
-
-- Computes per-station **day-of-season percentiles** vs a baseline window (default `1991-2020`)
-- Aggregates to a statewide **median percentile** time series
-- Shows **top/bottom stations** for the selected end date + missingness/coverage
-- Generates an optional **AI narrative** that is validated to avoid introducing numbers not present in the computed fact set
-
-Raw station pulls are cached to `data_cache/` (Parquet when possible; otherwise CSV).
-
-## Usage
+## CLI Usage
 
 Run with an explicit site ID:
 
@@ -94,79 +69,111 @@ Run without a site argument:
 python snotel.py 2026-04-01 2026-04-21
 ```
 
-In the no-site flow, the script:
+The generated report is written to the current directory with a deterministic filename such as `snotel_784_2026-04-01_2026-04-21.html`.
 
-1. Starts a small local HTTP server on `127.0.0.1`
-2. Opens a browser popup asking for a natural-language site search
-3. Uses OpenAI GPT (requires `OPENAI_API_KEY`; if the API call fails it falls back to fuzzy search)
-4. Resolves the best matching site
-5. Fetches SNOTEL data and writes the final HTML report
+## State Dashboard
 
-## Output
+Install dependencies:
 
-The generated report:
-
-- is written to the current working directory
-- uses a filename based on site ID and date range
-- contains the station name and elevation in the heading when available
-- shows rows in descending date order
-
-Example output filename:
-
-```text
-snotel_784_2026-04-01_2026-04-21.html
+```powershell
+pip install streamlit pyarrow
 ```
 
-The CLI also prints a summary message with the output path, site, and requested range.
+Run the dashboard:
 
-## Data Columns
+```powershell
+streamlit run app.py
+```
 
-The HTML report currently displays these normalized columns:
+The dashboard computes day-of-season percentiles, aggregates statewide median percentiles, and can generate a constrained narrative summary.
 
-- `date`
-- `swe_in`
-- `snow_depth_in`
-- `precip_in`
-- `tmax_f`
-- `tmin_f`
-- `tavg_f`
+## Bulk Postgres Ingest
 
-These are sourced from the NRCS daily station report fields:
+The bulk loader pulls daily observations for all known sites, filters to the snow season months, and stores them in a partitioned Postgres table.
 
-- Snow Water Equivalent
-- Snow Depth
-- Precipitation Accumulation
-- Air Temperature Maximum
-- Air Temperature Minimum
-- Air Temperature Average
+Partitioning scheme:
+
+- Parent table is hash-partitioned by `site_id`
+- Each hash partition is sub-partitioned by `season_bucket`
+- `season_bucket = 0` means `Nov-Jan`
+- `season_bucket = 1` means `Feb-Apr`
+
+Effective date window:
+
+- Default requested range is `1950-01-01` through `2000-12-31`
+- By default the loader first fetches `POR_BEGIN` / `POR_END`
+- Actual start date per site is `max(1950-01-01, POR_BEGIN)`
+- Use `--no-use-por` to disable that adjustment
+
+Preferred Postgres client setup:
+
+```powershell
+pip install "psycopg[binary]"
+# or
+pip install psycopg2-binary
+```
+
+Set your connection string:
+
+```powershell
+$env:DATABASE_URL="postgresql://user:pass@host:5432/dbname"
+```
+
+Run the full ingest:
+
+```powershell
+python snotel_bulk_ingest.py --hash-partitions 32
+```
+
+Progress is written to `data_cache/snotel_ingest_1950_2000.jsonl`. Inserts are idempotent via `ON CONFLICT DO NOTHING`.
+
+### Postgres Client Fallback
+
+If the local Python Postgres driver install is broken, the repo can fall back to `psql` automatically for schema creation and bulk inserts. On the validation machine, that fallback was used successfully for the live integration and smoke ingest checks.
+
+### Verified Smoke Test
+
+This one-site ingest path was verified against a real local Postgres instance:
+
+```powershell
+$env:DATABASE_URL="postgresql://snowpack:snowpack@localhost:5432/snowpack"
+python snotel_bulk_ingest.py --schema snotel_smoke --table daily_observations --hash-partitions 4 --site-ids 395 --start-date 2000-01-01 --end-date 2000-04-30 --no-use-por
+```
+
+That run inserted `121` rows for site `395` covering `2000-01-01` through `2000-04-30`, and the resulting rows were queryable from Postgres.
+
+## Postgres Integration Test
+
+Set `DATABASE_URL` and run:
+
+```powershell
+python run_live_postgres_integration.py
+```
+
+That test creates a temporary schema, builds the partitioned table structure, verifies the parent and child partitions exist, and then drops the temporary schema.
+
+If you want to run Postgres in Docker instead of using an existing install, the repo also includes:
+
+- [`docker-compose.yml`](/C:/Users/zhiha/snowpack-tracker/docker-compose.yml)
+- [`run_postgres_integration.ps1`](/C:/Users/zhiha/snowpack-tracker/run_postgres_integration.ps1)
 
 ## Testing
 
-Run the unit tests with:
+Run the core test suite with:
 
 ```powershell
-python -m unittest test_snotel.py
+python -m unittest test_snotel.py test_climate_report.py test_snotel_postgres.py test_snotel_bulk_ingest.py
 ```
 
-The tests cover:
+Live verification commands used successfully during validation:
 
-- station lookup by ID and exact name
-- CLI argument parsing
-- popup search flow
-- HTML output naming and content
-- display formatting behavior
+```powershell
+python run_live_postgres_integration.py
+python snotel_bulk_ingest.py --schema snotel_smoke --table daily_observations --hash-partitions 4 --site-ids 395 --start-date 2000-01-01 --end-date 2000-04-30 --no-use-por
+```
 
 ## Notes
 
-- Exact-name lookup is case-insensitive, but it is not fuzzy unless you use the popup search flow.
-- If `OPENAI_API_KEY` is not set, the popup-based flow will not run.
-- The vendored [`climata/`](/C:/Users/zhiha/snowpack-tracker/climata) directory appears to be an older upstream dependency snapshot and is not the main entry point for this tool.
-- Sample generated HTML files and test artifacts in the repo are useful references, but they are not required to run the CLI.
-
-## Example
-
-```powershell
-python snotel.py 395 2026-04-01 2026-04-21
-```
-
-This will fetch the requested daily data for site `395`, generate an HTML table, and open it in your browser.
+- Exact-name lookup is case-insensitive; fuzzy search is only used in the popup flow fallback
+- The vendored [`climata/`](/C:/Users/zhiha/snowpack-tracker/climata) directory is not the main entry point for this project
+- Sample HTML files and `test_artifacts/` are reference outputs, not required runtime assets

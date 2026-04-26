@@ -66,6 +66,20 @@ class ClimateReportTest(unittest.TestCase):
         selected = climate_report.select_representative_sites(sites, total_n=6)
         self.assertEqual([site_id for site_id, _ in selected], ["1", "2", "4", "5", "7", "8"])
 
+    def test_filter_sites_by_elevation_bounds(self):
+        sites = [
+            ("A", {"elevation_ft": 1000, "name": "A"}),
+            ("B", {"elevation_ft": 5000, "name": "B"}),
+            ("C", {"elevation_ft": None, "name": "C"}),
+            ("D", {"elevation_ft": 8000, "name": "D"}),
+        ]
+
+        out = climate_report.filter_sites_by_elevation(sites, min_ft=2000, max_ft=7000)
+        self.assertEqual([site_id for site_id, _ in out], ["B"])
+
+        out = climate_report.filter_sites_by_elevation(sites, min_ft=2000, include_unknown=True)
+        self.assertEqual([site_id for site_id, _ in out], ["B", "C", "D"])
+
 
 class NarrativeValidationTest(unittest.TestCase):
     def test_narrative_validation_rejects_unexpected_numbers(self):
@@ -94,4 +108,3 @@ class NarrativeValidationTest(unittest.TestCase):
         bad_narrative["headline"] = "UT summary: 56.0th percentile"
         ok, reason = narrative.validate_narrative_json(bad_narrative, facts)
         self.assertFalse(ok)
-

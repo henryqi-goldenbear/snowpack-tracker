@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: snowpack-tracker-postgres
+    environment:
+      POSTGRES_DB: snowpack
+      POSTGRES_USER: snowpack
+      POSTGRES_PASSWORD: snowpack
+    ports:
+      - "54321:5432"
+    volumes:
+      - snowpack_tracker_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U snowpack -d snowpack"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  snowpack_tracker_pgdata:
+

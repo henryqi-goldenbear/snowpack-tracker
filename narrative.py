@@ -8,8 +8,39 @@ from urllib.request import Request, urlopen
 import snotel
 
 
-DEFAULT_NARRATIVE_MODEL = os.environ.get("OPENAI_MODEL", getattr(snotel, "OPENAI_MODEL", "gpt-4o-mini"))
+DEFAULT_NARRATIVE_MODEL_FALLBACK = "gpt-5-mini"
 OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
+
+
+def _load_dotenv_simple(*paths: str) -> None:
+    # Minimal .env loader (no external deps). Intended for local dev only.
+    for path in paths:
+        if not path or not os.path.exists(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                for raw_line in handle:
+                    line = raw_line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, value = line.split("=", 1)
+                    key = key.strip()
+                    value = value.strip().strip("'").strip('"')
+                    if key and key not in os.environ:
+                        os.environ[key] = value
+        except OSError:
+            continue
+
+
+_load_dotenv_simple(".env.local", ".env")
+
+
+def _default_model() -> str:
+    # Read at call time so Streamlit/UI can override via env or function args.
+    return os.environ.get(
+        "OPENAI_MODEL",
+        getattr(snotel, "OPENAI_MODEL", DEFAULT_NARRATIVE_MODEL_FALLBACK),
+    )
 
 
 def extract_json_object(text: str) -> dict[str, Any]:
@@ -72,9 +103,10 @@ def query_openai_json(
     messages: list[dict[str, str]],
     *,
     api_key: str,
-    model: str = DEFAULT_NARRATIVE_MODEL,
+    model: Optional[str] = None,
     timeout_seconds: int = 30,
 ) -> dict[str, Any]:
+    model = (model or "").strip() or _default_model()
     payload = json.dumps({"model": model, "messages": messages, "temperature": 0}).encode("utf-8")
     request = Request(
         getattr(snotel, "OPENAI_API_URL", "https://api.openai.com/v1/chat/completions"),
@@ -138,6 +170,7 @@ def generate_grounded_narrative(
     *,
     use_ai: bool = True,
     api_key: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> dict[str, Any]:
     api_key = (api_key if api_key is not None else os.environ.get(OPENAI_API_KEY_ENV, "")).strip()
     if not use_ai or not api_key:
@@ -145,7 +178,7 @@ def generate_grounded_narrative(
 
     messages = build_narrative_messages(facts)
     try:
-        payload = query_openai_json(messages, api_key=api_key)
+        payload = query_openai_json(messages, api_key=api_key, model=model)
         content = payload["choices"][0]["message"]["content"]
         candidate = extract_json_object(content)
         ok, reason = validate_narrative_json(candidate, facts)

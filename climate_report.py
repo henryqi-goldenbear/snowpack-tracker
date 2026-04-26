@@ -86,6 +86,31 @@ def select_representative_sites(
     return selected
 
 
+def filter_sites_by_elevation(
+    sites: list[tuple[str, dict]],
+    *,
+    min_ft: Optional[int] = None,
+    max_ft: Optional[int] = None,
+    include_unknown: bool = False,
+) -> list[tuple[str, dict]]:
+    if min_ft is None and max_ft is None:
+        return list(sites)
+
+    out: list[tuple[str, dict]] = []
+    for site_id, info in sites:
+        elevation = info.get("elevation_ft")
+        if elevation is None:
+            if include_unknown:
+                out.append((site_id, info))
+            continue
+        if min_ft is not None and elevation < min_ft:
+            continue
+        if max_ft is not None and elevation > max_ft:
+            continue
+        out.append((site_id, info))
+    return out
+
+
 def _safe_cache_stem(site_id: str, awdb_state: str, start_date: str, end_date: str) -> str:
     key = f"{site_id}_{awdb_state}_{start_date}_{end_date}"
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
@@ -222,6 +247,11 @@ def compute_station_percentiles(
         .apply(list)
         .to_dict()
     )
+    baseline_medians = {
+        month_day: float(pd.Series(values).median())
+        for month_day, values in baseline_values.items()
+        if values
+    }
 
     out = current_df[["date", metric_col]].copy()
     out = out.rename(columns={metric_col: "value"})
@@ -230,7 +260,8 @@ def compute_station_percentiles(
         lambda row: percentile_from_baseline(row["value"], baseline_values.get(row["month_day"], [])),
         axis=1,
     )
-    return out[["date", "value", "percentile"]]
+    out["baseline_median"] = out["month_day"].map(lambda md: baseline_medians.get(md, float("nan")))
+    return out[["date", "value", "percentile", "baseline_median"]]
 
 
 def build_state_series(
@@ -274,6 +305,9 @@ class StateReportInputs:
     baseline_end_year: int = 2020
     coverage_mode: str = "representative"
     representative_n: int = 45
+    elevation_min_ft: Optional[int] = None
+    elevation_max_ft: Optional[int] = None
+    include_unknown_elevation: bool = False
     cache_dir: str | Path = "data_cache"
 
 
@@ -291,6 +325,12 @@ def compute_state_report(
     progress: Optional[Callable[[int, int], None]] = None,
 ) -> StateReport:
     all_sites = sites_for_awdb_state(inputs.awdb_state)
+    all_sites = filter_sites_by_elevation(
+        all_sites,
+        min_ft=inputs.elevation_min_ft,
+        max_ft=inputs.elevation_max_ft,
+        include_unknown=inputs.include_unknown_elevation,
+    )
     if inputs.coverage_mode == "all":
         selected = all_sites
     else:
@@ -300,8 +340,50 @@ def compute_state_report(
     baseline_start = f"{inputs.baseline_start_year}-01-01"
     baseline_end = f"{inputs.baseline_end_year}-12-31"
 
+    if total == 0:
+        state_series = build_state_series(
+            pd.DataFrame(),
+            season_start=inputs.season_start,
+            season_end=inputs.season_end,
+            total_sites=0,
+        )
+        state_series["median_value"] = float("nan")
+        state_series["median_baseline_value"] = float("nan")
+        snapshot_df = pd.DataFrame(
+            columns=["site_id", "name", "elevation_ft", "value", "percentile", "has_data"]
+        )
+        facts = {
+            "state": inputs.awdb_state,
+            "metric_key": inputs.metric_key,
+            "metric_label": _normalized_metric_column(inputs.metric_key),
+            "season_start": inputs.season_start,
+            "season_end": inputs.season_end,
+            "baseline_years": f"{inputs.baseline_start_year}-{inputs.baseline_end_year}",
+            "coverage_mode": inputs.coverage_mode,
+            "representative_n": inputs.representative_n,
+            "elevation_min_ft": inputs.elevation_min_ft,
+            "elevation_max_ft": inputs.elevation_max_ft,
+            "include_unknown_elevation": inputs.include_unknown_elevation,
+            "station_count_total": 0,
+            "end_date": inputs.season_end,
+            "end_statewide_median_percentile": "NA",
+            "end_stations_used": 0,
+            "end_stations_missing": 0,
+            "end_pct_with_data": "NA",
+            "top_stations": [],
+            "bottom_stations": [],
+            "missing_station_examples": [],
+        }
+        return StateReport(
+            inputs=inputs,
+            state_series=state_series,
+            station_snapshot=snapshot_df,
+            narrative_facts=facts,
+        )
+
     per_station_end_rows: list[dict] = []
     all_percentiles: list[pd.DataFrame] = []
+    all_values: list[pd.DataFrame] = []
 
     for index, (site_id, info) in enumerate(selected, start=1):
         if progress is not None:
@@ -350,6 +432,10 @@ def compute_state_report(
             pct_df["site_id"] = site_id
             all_percentiles.append(pct_df)
 
+            value_df = station_pct[["date", "value", "baseline_median"]].copy()
+            value_df["site_id"] = site_id
+            all_values.append(value_df)
+
     snapshot_df = pd.DataFrame(per_station_end_rows)
     snapshot_df["has_data"] = snapshot_df["percentile"].notna()
 
@@ -360,6 +446,22 @@ def compute_state_report(
         season_start=inputs.season_start,
         season_end=inputs.season_end,
         total_sites=total_sites,
+    )
+
+    stacked_values = pd.concat(all_values, ignore_index=True) if all_values else pd.DataFrame()
+    if stacked_values.empty:
+        value_medians = pd.Series(dtype="float64")
+        baseline_medians = pd.Series(dtype="float64")
+    else:
+        by_date = stacked_values.groupby(stacked_values["date"].dt.date)
+        value_medians = by_date["value"].median()
+        baseline_medians = by_date["baseline_median"].median()
+
+    state_series["median_value"] = state_series["date"].map(
+        lambda d: float(value_medians.get(d, float("nan")))
+    )
+    state_series["median_baseline_value"] = state_series["date"].map(
+        lambda d: float(baseline_medians.get(d, float("nan")))
     )
 
     end_day = datetime.strptime(inputs.season_end, "%Y-%m-%d").date()
@@ -388,6 +490,9 @@ def compute_state_report(
         "baseline_years": f"{inputs.baseline_start_year}-{inputs.baseline_end_year}",
         "coverage_mode": inputs.coverage_mode,
         "representative_n": inputs.representative_n,
+        "elevation_min_ft": inputs.elevation_min_ft,
+        "elevation_max_ft": inputs.elevation_max_ft,
+        "include_unknown_elevation": inputs.include_unknown_elevation,
         "station_count_total": int(total_sites),
         "end_date": inputs.season_end,
         "end_statewide_median_percentile": _fmt(statewide_end_pct),
