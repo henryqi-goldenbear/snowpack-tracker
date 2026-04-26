@@ -67,17 +67,9 @@ class _PsqlConnection:
 
 
 def _add_local_dependency_paths():
-    candidate_paths = []
     base_dir = Path(__file__).resolve().parent
     for dependency_dir in (".pgdeps", ".deps"):
-        candidate_paths.append(base_dir / dependency_dir)
-
-    try:
-        candidate_paths.append(Path(site.getusersitepackages()))
-    except Exception:
-        pass
-
-    for candidate in candidate_paths:
+        candidate = base_dir / dependency_dir
         candidate_str = str(candidate)
         if candidate_str in sys.path:
             continue
@@ -131,15 +123,15 @@ def _parse_psql_value(value):
 
 
 def _load_postgres_driver():
-    _add_local_dependency_paths()
-
     try:
-        import psycopg  # type: ignore
+        import psycopg2  # type: ignore
 
-        if hasattr(psycopg, "connect"):
-            return PostgresDriver(name="psycopg", module=psycopg)
+        if hasattr(psycopg2, "connect"):
+            return PostgresDriver(name="psycopg2", module=psycopg2)
     except ImportError:
         pass
+
+    _add_local_dependency_paths()
 
     try:
         import psycopg2  # type: ignore
@@ -148,16 +140,12 @@ def _load_postgres_driver():
             return PostgresDriver(name="psycopg2", module=psycopg2)
     except ImportError as exc:
         raise PostgresDependencyError(
-            "Missing Postgres driver. Install one of:\n"
-            "  - pip install 'psycopg[binary]'\n"
-            "  - pip install psycopg2-binary\n"
+            "Missing Postgres driver. Install psycopg2-binary, or make it available in .deps/.pgdeps.\n"
         ) from exc
 
     raise PostgresDependencyError(
-        "Found a Postgres driver package, but it is incomplete and does not expose connect(). "
-        "Reinstall one of:\n"
-        "  - pip install 'psycopg[binary]'\n"
-        "  - pip install psycopg2-binary\n"
+        "Found a psycopg2 package, but it is incomplete and does not expose connect(). "
+        "Reinstall psycopg2-binary or remove the broken local copy."
     )
 
 

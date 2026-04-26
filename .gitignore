@@ -8,3 +8,4 @@ data_cache/
 .venv/
 .deps/
 .pgdeps/
+.vendor/

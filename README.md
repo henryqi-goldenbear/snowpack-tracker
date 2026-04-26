@@ -28,7 +28,7 @@ It is still a lightweight local project rather than a full production app, but t
 - Internet access to reach the USDA SNOTEL endpoint
 - For dashboard work: `streamlit` and optionally `pyarrow`
 - For Postgres ingest: a reachable PostgreSQL server and either:
-  - a working Python Postgres driver (`psycopg` or `psycopg2`), or
+  - a working Python Postgres driver (`psycopg2`), or
   - `psql` available locally as a fallback client
 
 ## Setup
@@ -108,8 +108,6 @@ Effective date window:
 Preferred Postgres client setup:
 
 ```powershell
-pip install "psycopg[binary]"
-# or
 pip install psycopg2-binary
 ```
 
@@ -129,7 +127,7 @@ Progress is written to `data_cache/snotel_ingest_1950_2000.jsonl`. Inserts are i
 
 ### Postgres Client Fallback
 
-If the local Python Postgres driver install is broken, the repo can fall back to `psql` automatically for schema creation and bulk inserts. On the validation machine, that fallback was used successfully for the live integration and smoke ingest checks.
+The standard Postgres client path is `psycopg2`. Repo-local dependency directories such as `.deps` and `.pgdeps` are optional fallbacks, not the primary install target. If `psycopg2` is unavailable or broken, the repo can fall back to `psql` automatically for schema creation and bulk inserts. On the validation machine, that fallback was used successfully for the live integration and smoke ingest checks.
 
 ### Verified Smoke Test
 

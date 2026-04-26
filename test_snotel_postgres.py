@@ -79,39 +79,68 @@ class PostgresConnectTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 snotel_postgres.connect_postgres(dsn=None)
 
-    def test_load_driver_skips_incomplete_psycopg_namespace_and_uses_psycopg2(self):
-        fake_psycopg = types.SimpleNamespace()
+    def test_load_driver_prefers_working_psycopg2_from_normal_path(self):
         fake_psycopg2 = types.SimpleNamespace(connect=lambda dsn: ("ok", dsn))
 
         real_import = __import__
 
         def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
-            if name == "psycopg":
-                return fake_psycopg
             if name == "psycopg2":
                 return fake_psycopg2
             return real_import(name, globals, locals, fromlist, level)
 
-        with mock.patch("builtins.__import__", side_effect=fake_import):
+        with mock.patch("builtins.__import__", side_effect=fake_import), mock.patch(
+            "snotel_postgres._add_local_dependency_paths"
+        ) as add_paths:
+            driver = snotel_postgres._load_postgres_driver()
+
+        self.assertEqual(driver.name, "psycopg2")
+        self.assertIs(driver.module, fake_psycopg2)
+        add_paths.assert_not_called()
+
+    def test_load_driver_uses_optional_dependency_path_when_normal_import_missing(self):
+        fake_psycopg2 = types.SimpleNamespace(connect=lambda dsn: ("ok", dsn))
+
+        real_import = __import__
+        state = {"paths_added": False}
+
+        def fake_add_paths():
+            state["paths_added"] = True
+
+        def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "psycopg2":
+                if state["paths_added"]:
+                    return fake_psycopg2
+                raise ImportError("missing")
+            return real_import(name, globals, locals, fromlist, level)
+
+        with mock.patch("builtins.__import__", side_effect=fake_import), mock.patch(
+            "snotel_postgres._add_local_dependency_paths", side_effect=fake_add_paths
+        ):
             driver = snotel_postgres._load_postgres_driver()
 
         self.assertEqual(driver.name, "psycopg2")
         self.assertIs(driver.module, fake_psycopg2)
 
     def test_load_driver_raises_for_incomplete_driver_install(self):
-        fake_psycopg = types.SimpleNamespace()
         fake_psycopg2 = types.SimpleNamespace()
 
         real_import = __import__
+        state = {"paths_added": False}
+
+        def fake_add_paths():
+            state["paths_added"] = True
 
         def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
-            if name == "psycopg":
-                return fake_psycopg
             if name == "psycopg2":
-                return fake_psycopg2
+                if state["paths_added"]:
+                    return fake_psycopg2
+                raise ImportError("missing")
             return real_import(name, globals, locals, fromlist, level)
 
-        with mock.patch("builtins.__import__", side_effect=fake_import):
+        with mock.patch("builtins.__import__", side_effect=fake_import), mock.patch(
+            "snotel_postgres._add_local_dependency_paths", side_effect=fake_add_paths
+        ):
             with self.assertRaises(snotel_postgres.PostgresDependencyError):
                 snotel_postgres._load_postgres_driver()
 
