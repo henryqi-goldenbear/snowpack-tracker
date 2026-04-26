@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+data_cache/
+.env
+.env.local
+
+# local environments / vendored deps
+.venv/
+.deps/
+.pgdeps/

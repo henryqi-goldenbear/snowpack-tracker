@@ -37,7 +37,7 @@ USAGE = (
     "Dates must use YYYY-MM-DD."
 )
 OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5-mini")
 OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
 PROMPT_TIMEOUT_SECONDS = 300
 
