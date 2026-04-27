@@ -1,3 +1,8 @@
+# TODOs
+1. ensure the Postgres server is fully working
+2. Replace the OpenAI key with Gemini API key so that I can access for free.
+3. Replace the Frontend with React/Typescript rather than simple HTML rendering.
+
 # Snowpack Tracker
 
 `snowpack-tracker` is a small Python toolkit for pulling daily SNOTEL data from the USDA NRCS report generator, rendering quick HTML reports, and loading historical snow-season observations into partitioned PostgreSQL tables.
